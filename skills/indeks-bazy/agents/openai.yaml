@@ -1,0 +1,7 @@
+interface:
+  display_name: "Индекс своей базы"
+  short_description: "Карточка на каждого из лички — кто, компания, как общается"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $indeks-bazy: собери индекс моей базы из Telegram."
+policy:
+  allow_implicit_invocation: true
