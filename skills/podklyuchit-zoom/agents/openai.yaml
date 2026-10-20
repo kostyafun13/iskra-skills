@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подключить Zoom"
+  short_description: "ИИ сам забирает расшифровки ваших созвонов"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podklyuchit-zoom: подключи мой Zoom."
+policy:
+  allow_implicit_invocation: true

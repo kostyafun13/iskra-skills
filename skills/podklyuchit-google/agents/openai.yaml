@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подключить Google"
+  short_description: "ИИ сам делает Google Документы и даёт ссылку"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podklyuchit-google: подключи мой Google."
+policy:
+  allow_implicit_invocation: true

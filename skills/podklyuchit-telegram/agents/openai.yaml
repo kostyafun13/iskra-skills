@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подключить Telegram"
+  short_description: "Вход один раз — ИИ сам читает чаты и каналы"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podklyuchit-telegram: подключи мой Telegram."
+policy:
+  allow_implicit_invocation: true
