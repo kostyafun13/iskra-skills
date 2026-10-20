@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подключить расшифровку"
+  short_description: "ИИ сам переводит голосовые и записи в текст"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podklyuchit-rasshifrovku: подключи расшифровку голоса."
+policy:
+  allow_implicit_invocation: true
