@@ -1,0 +1,7 @@
+interface:
+  display_name: "Разбор переписок"
+  short_description: "Ни одна переписка не зависает дольше суток"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $razbor-perepisok: разбери, кому я не ответил и что зависло."
+policy:
+  allow_implicit_invocation: true

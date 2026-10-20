@@ -1,4 +1,6 @@
 .env
 *.session*
+.telegram.lock
 private/
+__pycache__/
 .venv/

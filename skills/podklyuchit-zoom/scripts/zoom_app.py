@@ -1,4 +1,4 @@
-"""Свой Zoom для ИИ: проверка ключей, список записей и скачивание расшифровок.
+"""Свой Zoom для ИИ: проверка ключей, список записей, скачивание расшифровок и звука созвона.
 
 Только чтение. Нужен Python 3.9+ и certifi (requirements.txt).
 Ключи — в .env рядом со скриптом: ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_USER.
@@ -60,10 +60,18 @@ def recordings(tok, days):
         while True:
             j = get(tok, f"/users/{user}/recordings", params)
             for m in j.get("meetings", []):
-                tr = [f for f in m.get("recording_files", []) if f.get("file_type") == "TRANSCRIPT"]
+                files = m.get("recording_files", [])
+                tr = [f for f in files if f.get("file_type") == "TRANSCRIPT"]
+                zvuk = [f for f in files if f.get("file_type") == "M4A" and f.get("status") == "completed"]
+                # Комнату перезапускали — у одной встречи несколько частей: берём все, иначе теряем часы разговора.
+                tr.sort(key=lambda f: f.get("recording_start") or "")
+                zvuk.sort(key=lambda f: f.get("recording_start") or "")
                 rows.append({"uuid": m["uuid"], "topic": m.get("topic"), "start_utc": m.get("start_time"),
                              "minutes": m.get("duration"), "transcript": bool(tr),
-                             "transcript_url": tr[0]["download_url"] if tr else None})
+                             "transcript_urls": [f["download_url"] for f in tr],
+                             "audio_urls": [f["download_url"] for f in zvuk],
+                             "transcript_url": tr[0]["download_url"] if tr else None,
+                             "audio_url": zvuk[0]["download_url"] if zvuk else None})
             if not j.get("next_page_token"):
                 break
             params["next_page_token"] = j["next_page_token"]
@@ -82,6 +90,29 @@ def download(tok, url, out):
     return out
 
 
+def download_audio(tok, url, out):
+    """Звук созвона (M4A) — для точной расшифровки мест с конкретикой. Файл остаётся на компьютере."""
+    sep = "&" if "?" in url else "?"
+    r = urllib.request.urlopen(f"{url}{sep}access_token={tok}", timeout=600, context=CTX)
+    if "text/html" in r.headers.get("Content-Type", ""):
+        raise SystemExit("Zoom вернул страницу вместо звука. Проверьте права приложения на записи.")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "wb") as f:
+        while chunk := r.read(1 << 20):
+            f.write(chunk)
+    return out
+
+
+def imya(r, ext, chast=0, vsego=1):
+    base = f"{(r['start_utc'] or '')[:10]}_{''.join(c if c.isalnum() else '_' for c in r['topic'] or 'zoom')[:40]}"
+    return f"{base}_ch{chast + 1}.{ext}" if vsego > 1 else f"{base}.{ext}"
+
+
+def urls(r, kind):
+    """Новый список хранит все части; старый — только первую."""
+    return r.get(f"{kind}_urls") or ([r[f"{kind}_url"]] if r.get(f"{kind}_url") else [])
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -93,6 +124,10 @@ def main():
     g.add_argument("--from-list", required=True, help="JSON от команды list")
     g.add_argument("--out", required=True, help="Папка для .vtt")
     g.add_argument("--limit", type=int, default=5)
+    z = sub.add_parser("audio", help="Скачать звук созвонов из списка — для точной расшифровки")
+    z.add_argument("--from-list", required=True, help="JSON от команды list")
+    z.add_argument("--out", required=True, help="Папка для .m4a")
+    z.add_argument("--limit", type=int, default=1)
     a = p.parse_args()
     env()
     tok = token()
@@ -107,11 +142,26 @@ def main():
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"Записей: {len(rows)}, с расшифровкой: {sum(r['transcript'] for r in rows)} → {out}")
-    else:
+    elif a.command == "transcript":
         rows = [r for r in json.loads(Path(a.from_list).read_text(encoding="utf-8")) if r["transcript"]][:a.limit]
         for r in rows:
-            name = f"{(r['start_utc'] or '')[:10]}_{''.join(c if c.isalnum() else '_' for c in r['topic'] or 'zoom')[:40]}.vtt"
-            print(download(tok, r["transcript_url"], Path(a.out).resolve() / name))
+            u = urls(r, "transcript")
+            znakov = 0
+            for k, url in enumerate(u):
+                f = download(tok, url, Path(a.out).resolve() / imya(r, "vtt", k, len(u)))
+                znakov += len(f.read_text(encoding="utf-8"))
+                print(f)
+            # Приёмка: минута разговора — сотни знаков. Мало текста на длинной встрече — потеряна часть.
+            if r.get("minutes") and znakov < r["minutes"] * 150:
+                print(f"  ⚠ {r['topic']}: {r['minutes']} мин, а текста {znakov} знаков — проверьте, все ли части записи на месте.")
+    else:
+        rows = [r for r in json.loads(Path(a.from_list).read_text(encoding="utf-8")) if urls(r, "audio")][:a.limit]
+        if not rows:
+            raise SystemExit("В списке нет звука. Обновите список командой list — в старых списках звука нет.")
+        for r in rows:
+            u = urls(r, "audio")
+            for k, url in enumerate(u):
+                print(download_audio(tok, url, Path(a.out).resolve() / imya(r, "m4a", k, len(u))))
 
 
 if __name__ == "__main__":
