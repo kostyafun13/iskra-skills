@@ -1,0 +1,7 @@
+interface:
+  display_name: "Канон"
+  short_description: "Правило один раз — и ИИ так больше не ошибается"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $kanon: запомни это как канон."
+policy:
+  allow_implicit_invocation: true

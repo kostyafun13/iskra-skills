@@ -1,0 +1,7 @@
+interface:
+  display_name: "Сторис"
+  short_description: "Сторис к каждому вышедшему посту"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $storis: сделай сторис к сегодняшнему посту."
+policy:
+  allow_implicit_invocation: true

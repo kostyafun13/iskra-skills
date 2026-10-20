@@ -1,0 +1,7 @@
+interface:
+  display_name: "Монтаж"
+  short_description: "Ролик из созвона, готовый к YouTube"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $montazh: вырежи из последнего созвона момент про оффер."
+policy:
+  allow_implicit_invocation: true

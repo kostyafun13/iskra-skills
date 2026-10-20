@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подбор скила"
+  short_description: "Каждая просьба — по правильному скилу"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podbor-skila: какие у тебя скилы?."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Посты из голосового"
+  short_description: "Голосовое → пост в канале в твоём тоне"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $posty-iz-golosa: забери мои голосовые и сделай посты."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "ЛБ СП"
+  short_description: "5 материалов и интро из одного брифа голосом"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $lb-sp: лБ СП, упакуй меня."
+policy:
+  allow_implicit_invocation: true

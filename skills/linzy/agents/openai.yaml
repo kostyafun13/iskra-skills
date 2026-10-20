@@ -1,0 +1,7 @@
+interface:
+  display_name: "Линзы"
+  short_description: "Проверка текста глазами сильных практиков"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $linzy: посмотри этот текст линзами."
+policy:
+  allow_implicit_invocation: true

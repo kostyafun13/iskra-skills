@@ -1,0 +1,7 @@
+interface:
+  display_name: "Мой тон"
+  short_description: "Сообщения звучат как ты, а не как ИИ"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $moy-ton: напиши ответ этому человеку моим тоном."
+policy:
+  allow_implicit_invocation: true

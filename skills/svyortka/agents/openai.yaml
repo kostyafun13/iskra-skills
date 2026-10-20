@@ -1,0 +1,7 @@
+interface:
+  display_name: "Свёртка"
+  short_description: "Решения чата не теряются — всё в файле"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $svyortka: сверни этот чат."
+policy:
+  allow_implicit_invocation: true

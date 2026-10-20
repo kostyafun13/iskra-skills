@@ -1,0 +1,7 @@
+interface:
+  display_name: "Топ-15 с интро"
+  short_description: "Подборка до 15 нужных людей и интро"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $top15-intro: собери топ-15 под запрос этого человека."
+policy:
+  allow_implicit_invocation: true

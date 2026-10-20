@@ -1,0 +1,7 @@
+interface:
+  display_name: "Чаты с партнёрами"
+  short_description: "Знакомство, которое доходит до встречи"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $chat-s-partnerami: познакомь меня с этим человеком."
+policy:
+  allow_implicit_invocation: true

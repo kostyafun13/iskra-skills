@@ -1,0 +1,7 @@
+interface:
+  display_name: "Дожим"
+  short_description: "Застрявших между встречами — снова в календарь"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $dozhim: подхвати тех, кто завис после встречи."
+policy:
+  allow_implicit_invocation: true

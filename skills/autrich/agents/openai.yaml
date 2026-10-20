@@ -1,0 +1,7 @@
+interface:
+  display_name: "Аутрич"
+  short_description: "Каждый день новые встречи с нужными людьми"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $autrich: запусти аутрич на сегодня."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Искра"
+  short_description: "Следующий шаг до прибыли в каждом чате"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $iskra-chaty: проверь мои партнёрские чаты."
+policy:
+  allow_implicit_invocation: true

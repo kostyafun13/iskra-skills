@@ -1,0 +1,7 @@
+interface:
+  display_name: "Пересоздать чат"
+  short_description: "Чистый чат с той же задачей"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $peresozdat-chat: пересоздай этот чат."
+policy:
+  allow_implicit_invocation: true

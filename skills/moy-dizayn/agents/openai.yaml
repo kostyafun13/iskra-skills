@@ -1,0 +1,7 @@
+interface:
+  display_name: "Мой дизайн"
+  short_description: "Обложки, слайды и деки в твоём стиле"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $moy-dizayn: сделай обложку к этому посту в моём стиле."
+policy:
+  allow_implicit_invocation: true
