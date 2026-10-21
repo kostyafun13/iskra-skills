@@ -1,0 +1,7 @@
+interface:
+  display_name: "Передай пингеру"
+  short_description: "Линия на контроль, чат — в архив"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $peredat-pingeru: передай пингеру эту линию."
+policy:
+  allow_implicit_invocation: true
