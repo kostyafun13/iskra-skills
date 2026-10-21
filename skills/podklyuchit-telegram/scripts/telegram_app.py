@@ -3,6 +3,8 @@
 Память: private/pamyat.json помнит по каждому чату, где остановились, — с --novoe читаем и качаем только новое.
 
 Отправки — по связанному с текстом поручению владельца; при неизвестном исходе повтор запрещён.
+Перед отправкой сверяется весь контекст плана: новое или исправленное сообщение в чате — план устарел.
+ispravleniya — находит отправленные сообщения, которые потом исправил человек: «было → стало» для урока.
 Ключи — в .env рядом со скриптом, сессия — файл personal_telegram.session там же.
 """
 import argparse
@@ -68,6 +70,8 @@ def cli(argv=None):
         s = sub.add_parser(name, help="Отправить план по действительному поручению; remind требует --at в плане")
         s.add_argument("--plan", required=True)
         s.add_argument("--authorization", required=True, help="JSON: исходное поручение и привязка к плану")
+    i = sub.add_parser("ispravleniya", help="Мои отправленные сообщения, которые потом исправил человек, — для уроков")
+    i.add_argument("--out", required=True, help="Локальный JSON с новыми правками: было → стало")
     v = sub.add_parser("verify-send", help="Прочитать серверное сообщение по квитанции без повторной отправки")
     v.add_argument("--operation-id", required=True)
     v.add_argument("--out", required=True)
@@ -169,6 +173,7 @@ def reaction_row(reaction):
 
 def message_row(m):
     return {"id": m.id, "date": m.date.isoformat(), "out": bool(m.out),
+            "edit_date": m.edit_date.isoformat() if getattr(m, "edit_date", None) else None,
             "sender_id": m.sender_id, "text": m.message or "", "links": ssylki(m),
             "reply_to_msg_id": getattr(m, "reply_to_msg_id", None),
             "file": m.file.name if m.file and m.file.name else None,
@@ -219,6 +224,12 @@ def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def context_digest(rows):
+    """Отпечаток контекста: номера, тексты и время правки. Исправленное сообщение меняет отпечаток,
+    хотя номер последнего сообщения остаётся прежним."""
+    return digest(json.dumps([[r["id"], r["text"], r.get("edit_date")] for r in rows], ensure_ascii=False))
+
+
 def scheduled_time(value):
     if value is None:
         return None
@@ -244,6 +255,8 @@ def validate_plan(plan):
         raise SystemExit("Текст плана изменён после подготовки.")
     if plan.get("reply_to") is not None and (type(plan["reply_to"]) is not int or plan["reply_to"] < 1):
         raise SystemExit("Неверный reply_to.")
+    if plan.get("context_sha256") is not None and not re.fullmatch(r"[a-f0-9]{64}", str(plan["context_sha256"])):
+        raise SystemExit("Неверный отпечаток контекста в плане.")
     scheduled_time(plan.get("schedule"))
 
 
@@ -269,7 +282,8 @@ async def prepare_send(client, a):
             "chat_id": utils.get_peer_id(entity), "recipient": utils.get_display_name(entity),
             "username": getattr(entity, "username", None), "text": text, "text_sha256": digest(text),
             "reply_to": a.reply_to, "schedule": at.isoformat() if at else None,
-            "context_last_id": context[0]["id"] if context else 0, "context": context}
+            "context_last_id": context[0]["id"] if context else 0, "context": context,
+            "context_sha256": context_digest(context)}
     validate_plan(plan)
     if a.reply_to and not await client.get_messages(entity, ids=a.reply_to):
         raise SystemExit("Сообщение для ответа не найдено в указанном чате.")
@@ -322,6 +336,11 @@ async def send_plan(client, plan, authorization, remind=False):
     latest = await client.get_messages(plan["chat_id"], limit=1)
     if (latest[0].id if latest else 0) != plan["context_last_id"]:
         raise SystemExit("В чате есть новые сообщения. Перечитайте диалог и заново подготовьте план; прежнее поручение само не отменяется.")
+    if plan.get("context_sha256"):
+        fresh = [message_row(m) for m in await client.get_messages(plan["chat_id"], limit=max(len(plan["context"]), 1))]
+        if context_digest(fresh) != plan["context_sha256"]:
+            raise SystemExit("Сообщения в чате изменились после подготовки — исправлены или удалены. "
+                             "Перечитайте диалог и заново подготовьте план; прежнее поручение само не отменяется.")
     at = scheduled_time(plan.get("schedule"))
     if at and at <= datetime.now(timezone.utc):
         raise SystemExit("Время напоминания уже прошло.")
@@ -329,7 +348,8 @@ async def send_plan(client, plan, authorization, remind=False):
         raise SystemExit("Сообщение для ответа больше недоступно.")
     record = {"operation_id": plan["id"], "fingerprint": fingerprint, "status": "outcome_unknown",
               "account_id": plan["account_id"], "chat_id": plan["chat_id"], "recipient": plan["recipient"],
-              "text_sha256": plan["text_sha256"], "reply_to": plan.get("reply_to"), "schedule": plan.get("schedule"),
+              "text_sha256": plan["text_sha256"], "text": plan["text"],
+              "reply_to": plan.get("reply_to"), "schedule": plan.get("schedule"),
               "authorization_source": authorization["source"], "started_at": datetime.now(timezone.utc).isoformat()}
     # Запись ДО сети удерживает неизвестный исход, включая остановку процесса.
     save(record, target)
@@ -340,6 +360,36 @@ async def send_plan(client, plan, authorization, remind=False):
     checked = await verify_receipt(client, record)
     save(checked, target)
     return checked
+
+
+async def ispravleniya(client):
+    """Отправленные сообщения, которые потом исправил человек. Новые правки дописываются
+    в private/ispravleniya.jsonl; повторный запуск ту же правку второй раз не отдаёт."""
+    folder = ROOT / "private" / "operations"
+    journal = ROOT / "private" / "ispravleniya.jsonl"
+    known = set()
+    if journal.exists():
+        known = {(r["operation_id"], r["edit_date"]) for r in map(json.loads, journal.read_text(encoding="utf-8").splitlines()) if r}
+    new = []
+    for f in sorted(folder.glob("*.json")) if folder.exists() else []:
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        if not rec.get("message_id") or rec.get("schedule"):
+            continue
+        m = await client.get_messages(rec["chat_id"], ids=rec["message_id"])
+        if not m or not getattr(m, "edit_date", None) or digest(m.message or "") == rec["text_sha256"]:
+            continue
+        row = {"operation_id": rec["operation_id"], "chat_id": rec["chat_id"], "recipient": rec.get("recipient"),
+               "message_id": rec["message_id"], "edit_date": m.edit_date.isoformat(),
+               "bylo": rec.get("text"), "stalo": m.message or ""}
+        if (row["operation_id"], row["edit_date"]) in known:
+            continue
+        new.append(row)
+    if new:
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        with journal.open("a", encoding="utf-8") as out:
+            for row in new:
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return new
 
 
 async def download(client, chat, limit, out, novoe=False):
@@ -443,6 +493,11 @@ async def run(a):
         elif a.command == "verify-send":
             record = json.loads(operation_path(a.operation_id).read_text(encoding="utf-8"))
             print("Проверка →", save(await verify_receipt(client, record), a.out))
+        elif a.command == "ispravleniya":
+            rows = await ispravleniya(client)
+            print("Новых правок человека:", len(rows), "→", save(rows, a.out))
+            if rows:
+                print("На каждую правку запишите урок в private/uroki.md: правило, почему, было → стало.")
         elif a.command == "download":
             files = await download(client, a.chat, a.limit, Path(a.out).resolve(), a.novoe)
             print("Файлов:", len(files), *files, sep="\n")

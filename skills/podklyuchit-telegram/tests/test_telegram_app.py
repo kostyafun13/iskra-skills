@@ -122,6 +122,24 @@ class SendTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SystemExit): await app.send_plan(self.c, p, self.authorization(p))
         self.assertEqual(self.c.send_calls, [])
 
+    async def test_edited_message_in_context_stops_stale_plan(self):
+        p = await self.plan()
+        self.c.latest = Message(id=7, peer_id=PeerUser(200), from_id=PeerUser(200), date=datetime.now(timezone.utc),
+                                message="Текст исправлен", out=False, entities=[], edit_date=datetime.now(timezone.utc))
+        with self.assertRaises(SystemExit): await app.send_plan(self.c, p, self.authorization(p))
+        self.assertEqual(self.c.send_calls, [])
+
+    async def test_human_correction_is_found_once_for_lesson(self):
+        p = await self.plan()
+        await app.send_plan(self.c, p, self.authorization(p))
+        self.assertEqual(await app.ispravleniya(self.c), [])
+        self.c.messages[9] = Message(id=9, peer_id=PeerUser(200), from_id=PeerUser(100), date=datetime.now(timezone.utc),
+                                     message="Человек поправил", out=True, entities=[], edit_date=datetime.now(timezone.utc))
+        rows = await app.ispravleniya(self.c)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["bylo"], rows[0]["stalo"]), (p["text"], "Человек поправил"))
+        self.assertEqual(await app.ispravleniya(self.c), [])
+
     async def test_account_mismatch_stops_send(self):
         p = await self.plan(); self.c.me.id = 999
         with self.assertRaises(SystemExit): await app.send_plan(self.c, p, self.authorization(p))
