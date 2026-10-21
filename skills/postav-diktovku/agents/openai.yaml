@@ -1,0 +1,7 @@
+interface:
+  display_name: "Поставить Диктовку"
+  short_description: "Голос в текст и чтение вслух на Маке"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $postav-diktovku: поставь Диктовку на мой Мак."
+policy:
+  allow_implicit_invocation: true
