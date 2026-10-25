@@ -1,0 +1,7 @@
+interface:
+  display_name: "Стратег"
+  short_description: "Зона гениальности, цели, сегменты, офферы и идеальное интро — по твоим созвонам"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $strateg: разбери мою стратегию по моим созвонам."
+policy:
+  allow_implicit_invocation: true

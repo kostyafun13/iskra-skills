@@ -1,7 +1,7 @@
 interface:
-  display_name: "ЛБ СП"
-  short_description: "5 материалов и интро из одного брифа голосом"
+  display_name: "ЛБ СП → Стратег"
+  short_description: "Старое имя — работа идёт по скилу «Стратег»"
   brand_color: "#dc0077"
-  default_prompt: "Используй $lb-sp: лБ СП, упакуй меня."
+  default_prompt: "Используй $strateg: разбери мою стратегию по моим созвонам."
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

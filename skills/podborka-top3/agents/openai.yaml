@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подборка топ-3"
+  short_description: "Трое из твоих созвонов под партнёра — для обмена выходами на топ-ЛПР"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podborka-top3: собери подборку топ-3 под этого человека."
+policy:
+  allow_implicit_invocation: true
