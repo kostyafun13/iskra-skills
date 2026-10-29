@@ -1,0 +1,7 @@
+interface:
+  display_name: "Подборка страт-партнёров"
+  short_description: "Связной с пулом фаундеров — персональная таблица кандидатов и роль навигатора"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $podborka-strat-partnerov: проработай этого человека как страт-партнёра."
+policy:
+  allow_implicit_invocation: true
