@@ -1,0 +1,7 @@
+interface:
+  display_name: "Топ-ЛПР на созвоны"
+  short_description: "Десяток тёплых фаундеров из твоей базы — кому написать на созвон, с топ-ЛПР под каждого"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $top-lpr-sozvony: подбери из моей базы десяток фаундеров, кому написать, чтобы созвониться."
+policy:
+  allow_implicit_invocation: true
