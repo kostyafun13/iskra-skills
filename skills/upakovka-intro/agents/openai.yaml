@@ -1,0 +1,7 @@
+interface:
+  display_name: "Упаковка интро"
+  short_description: "Экспресс-упаковка интро по 5 пунктам и карточка в твоём дизайне"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $upakovka-intro: упакуй моё интро по 5 пунктам."
+policy:
+  allow_implicit_invocation: true
