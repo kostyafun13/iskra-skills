@@ -1,0 +1,7 @@
+interface:
+  display_name: "Экспресс-подборка"
+  short_description: "Перед звонком с компанией — кто они, кому продают и кого из твоей базы им дать прямо сейчас"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $ekspress-podborka: у меня звонок с этой компанией, собери экспресс-подборку."
+policy:
+  allow_implicit_invocation: true
