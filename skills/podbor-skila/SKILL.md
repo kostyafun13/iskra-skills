@@ -26,7 +26,7 @@ description: "На каждую просьбу владельца сначала
 4. **Подборки** — для партнёров: обмен выходами на топ-ЛПР и назначение встреч, от узкого к широкому: `podborka-top3` → `top15-intro` → вся база из `indeks-bazy`.
 5. **Организация и коммуникации** — `chat-s-partnerami`, `autrich`, `dozhim`, `razbor-perepisok`, `iskra-chaty` (Пингер), `peredat-pingeru`.
 6. **Вывод информации** — `posty-iz-golosa`, `moy-ton`, `moy-dizayn`, `linzy`, `montazh`, `storis`.
-7. **Техничка** — `kanon`, `svyortka`, `peresozdat-chat`.
+7. **Техничка** — `kanon`, `svyortka`, `peresozdat-chat`, `postav-vpn-strazha`.
 
 ## Приёмка
 В каждом ответе на задачу есть строка «работаю по скилу …» или «работаю без скила».

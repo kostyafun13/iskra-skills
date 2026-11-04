@@ -1,0 +1,7 @@
+interface:
+  display_name: "Поставить VPN-стража"
+  short_description: "Экран и закрытие Клода, если он открыт без VPN"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $postav-vpn-strazha: поставь VPN-стража на мой Мак."
+policy:
+  allow_implicit_invocation: true

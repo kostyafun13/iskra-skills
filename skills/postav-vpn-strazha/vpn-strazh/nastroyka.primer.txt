@@ -1,0 +1,13 @@
+# Настройка VPN-стража. После правки: launchctl kickstart -k gui/$(id -u)/ru.iskra.vpn-strazh
+
+# Какие приложения стеречь: bundle id|имя для экрана. Строк может быть несколько.
+# Узнать bundle id: /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' /Applications/Claude.app/Contents/Info.plist
+prilozhenie=com.anthropic.claudefordesktop|Claude
+
+# Какой VPN считать включённым: имя процесса|имя для экрана. Чужие VPN тогда не считаются.
+# Имя процесса — первые 16 букв, как в выводе: ps -axco comm | sort -u
+# vpn=любой — подходит любой туннель.
+vpn=amneziawg-go|Amnezia
+
+# Через сколько секунд после появления экрана закрыть приложение. 0 — не закрывать, только экран.
+zakryt_cherez=10
