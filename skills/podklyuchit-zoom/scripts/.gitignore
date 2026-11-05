@@ -1,2 +1,4 @@
 .env
 private/
+.venv/
+__pycache__/

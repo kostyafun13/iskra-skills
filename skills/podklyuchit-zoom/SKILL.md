@@ -14,17 +14,17 @@ description: "Подключить свой Zoom к ИИ: ИИ сам забир
 
 ## Ключи — приложение Server-to-Server OAuth, один раз, около 10 минут
 Делает владелец или админ аккаунта Zoom:
-1. marketplace.zoom.us → Develop → Build App → **Server-to-Server OAuth App** → название, например «ИИ записи».
+1. marketplace.zoom.us → Develop → Build App (или синий плюс рядом с Developer) → **Server-to-Server OAuth App** → название, например «ИИ записи». Уже есть другие приложения — всё равно заведите отдельное, с правом только на чтение записей.
 2. App Credentials: **Account ID, Client ID, Client Secret** → в файл `.env` (ИИ создаст его и откроет). В чат не вставлять.
-3. Information: название компании и почта — обязательные поля.
+3. Information: название компании, имя и почта контакта. Без этих полей кнопки активации на шаге 5 не будет.
 4. Scopes → Add Scopes → Recording: `cloud_recording:read:list_user_recordings:admin` и `cloud_recording:read:recording:admin`.
 5. Activation → Activate your app.
 6. В `.env` в `ZOOM_USER` — почта, на которую зарегистрирован Zoom.
 
 ## Что делает ИИ
-1. Копирует `scripts/` в `connections/zoom/`, ставит зависимости: `python3 -m pip install -r requirements.txt`. Копирует `env.example` в `.env`.
+1. Копирует `scripts/` в `connections/zoom/`, ставит окружение: `python3 -m venv .venv` и `.venv/bin/pip install -r requirements.txt`. Копирует `env.example` в `.env`, только если `.env` ещё нет.
 2. Ведёт владельца по проверкам и шагам 1–6.
-3. Проверяет: `python3 zoom_app.py status` → «Ключи работают. Записей за 30 дней: N, из них с расшифровкой: M».
+3. Проверяет: `.venv/bin/python zoom_app.py status` → «Ключи работают. Записей за 30 дней: N, из них с расшифровкой: M».
 4. Забирает расшифровки: `list --days 30 --out private/zoom.json`, затем `transcript --from-list private/zoom.json --out private/zoom_vtt --limit 5`.
 5. Точная стенограмма нужна — забирает и звук: `audio --from-list private/zoom.json --out private/zoom_audio --limit 1`. Дальше скил `podklyuchit-rasshifrovku`, режим «Созвон из Zoom»: кто говорил — из расшифровки Zoom, имена и цифры — по звуку, точечно. Звук — тяжёлый файл, качай только нужный созвон.
 6. Встреча из нескольких частей (комнату перезапускали) — скачиваются все части: `_ch1`, `_ch2`. Если текста мало для длительности встречи, скрипт предупредит — значит, части не хватает.
@@ -32,7 +32,8 @@ description: "Подключить свой Zoom к ИИ: ИИ сам забир
 ## Если не работает
 - **Ошибка про scopes** — Zoom пишет, каких прав не хватает. Добавить их в Scopes и повторить.
 - **Записи есть, расшифровок нет** — не стоит галочка Audio transcript. Старые записи без неё текста не получат, новые — получат.
-- **Ошибка сертификатов на Mac** — `python3 -m pip install certifi` и повторить.
+- **Ошибка сертификатов на Mac** — `.venv/bin/pip install certifi` и повторить.
+- **Установку заблокировала проверка разрешений** — см. раздел про блокировку в `README.md`.
 
 ## Проверка — подключено, когда
 - `status` показал записи и расшифровки;

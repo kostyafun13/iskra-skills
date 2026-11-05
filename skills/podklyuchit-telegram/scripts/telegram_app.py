@@ -457,8 +457,9 @@ async def run(a):
     api_hash = os.environ.get("TELEGRAM_API_HASH", "")
     if not api_id.isdigit() or not api_hash:
         raise SystemExit("Заполните TELEGRAM_API_ID и TELEGRAM_API_HASH в файле .env рядом со скриптом.")
+    # Без повторов отправка не задвоится. Но вход обязан повторить запрос: аккаунт может жить на другом сервере Telegram.
     client = TelegramClient(str(ROOT / "personal_telegram"), int(api_id), api_hash,
-                            receive_updates=False, request_retries=0, connection_retries=2,
+                            receive_updates=False, request_retries=1 if a.command == "login" else 0, connection_retries=2,
                             flood_sleep_threshold=0, raise_last_call_error=True)
     try:
         if a.command == "login":

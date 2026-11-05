@@ -20,14 +20,16 @@ description: "Подключить расшифровку голоса: ИИ с�
 3. В каталоге — «Сервисные аккаунты» → «Создать»: имя, например `stt`, роль `ai.speechkit-stt.user`.
 4. Открыть этот аккаунт → «Создать новый ключ» → «API-ключ». Спросят область действия — выбрать распознавание речи SpeechKit. Ключ показывается один раз: сразу вписать его в `.env` (ИИ создаст файл и откроет). В чат не вставлять.
 
+Короткий путь вместо шагов 3–4: [AI Studio](https://aistudio.yandex.cloud/platform/) → «Создать API-ключ». В `.env` идёт **секретный ключ**, а не идентификатор. Такой ключ открывает и другие сервисы Яндекса; ключ только на распознавание даёт путь выше. Идентификаторы облака и каталога `b1g…` в консоли — не ключ.
+
 ## OpenAI — запасной путь
 platform.openai.com → API keys → создать ключ, пополнить баланс. В `.env`: `STT_PROVIDER=openai` и `OPENAI_API_KEY`.
 
 ## Что делает ИИ
-1. Копирует `scripts/` в `connections/rasshifrovka/`, ставит `python3 -m pip install -r requirements.txt`, копирует `env.example` в `.env`.
-2. Проверяет ffmpeg — без него нельзя порезать запись. Нет — ставит: Mac `brew install ffmpeg`, Windows `winget install ffmpeg`.
+1. Копирует `scripts/` в `connections/rasshifrovka/`, ставит окружение: `python3 -m venv .venv` и `.venv/bin/pip install -r requirements.txt`. Копирует `env.example` в `.env`, только если `.env` ещё нет.
+2. Проверяет ffmpeg — без него нельзя порезать запись. Нет — ставит: Mac `brew install ffmpeg` (нет Homebrew — сначала установка с brew.sh), Windows `winget install ffmpeg`.
 3. Ведёт владельца по шагам выбранного сервиса.
-4. Проверяет: `python3 rasshifrovka_app.py status` → «Расшифровка работает».
+4. Проверяет: `.venv/bin/python rasshifrovka_app.py status` → «Расшифровка работает». Установку заблокировала проверка разрешений — см. раздел про блокировку в `README.md`.
 5. Расшифровывает: один файл — `file --in запись.m4a`; папку — `folder --in private/files`. Текст ложится рядом с файлом в `.txt`. Готовый `.txt` есть — файл пропускается, второй раз не оплачивается.
 6. Голосовые из Telegram: скил `podklyuchit-telegram`, команда `download` в папку, затем `folder` по этой папке.
 
