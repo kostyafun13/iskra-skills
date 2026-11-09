@@ -6,6 +6,8 @@
 Перед отправкой сверяется весь контекст плана: новое или исправленное сообщение в чате — план устарел.
 ispravleniya — находит отправленные сообщения, которые потом исправил человек: «было → стало» для урока.
 Ключи — в .env рядом со скриптом, сессия — файл personal_telegram.session там же.
+Сторож нагрузки (nagruzka.py): свежий вход не читает всё сразу, обращения к Telegram считаются,
+отказ Telegram останавливает работу до срока. Отчёт — команда nagruzka, сеть для неё не нужна.
 """
 import argparse
 import asyncio
@@ -16,6 +18,7 @@ import json
 import os
 import re
 from pathlib import Path
+import sys
 import uuid
 
 from dotenv import load_dotenv
@@ -26,6 +29,13 @@ from telethon.tl.functions.messages import (CheckChatInviteRequest, GetMessageRe
 from telethon.tl.types import ChatInviteAlready, ChatInvitePeek, MessageEntityTextUrl, MessageEntityUrl
 
 ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))  # сторож лежит рядом со скриптом
+import nagruzka  # noqa: E402
+
+# Что останавливает команду — см. nagruzka.VIDY. Не названные здесь команды — отправка по поручению и её проверки.
+VID_KOMANDY = {"login": "sluzhba", "status": "sluzhba", "dialogs": "chtenie", "unanswered": "chtenie",
+               "read": "chtenie", "download": "chtenie", "ispravleniya": "chtenie"}
 INVITE = re.compile(r"(?:https?://)?t\.me/(?:\+|joinchat/)([\w-]+)")
 
 
@@ -34,6 +44,10 @@ def cli(argv=None):
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("login", help="Вход: номер, код, пароль — в обычном терминале владельца")
     sub.add_parser("status", help="Проверить вход")
+    n = sub.add_parser("nagruzka", help="Отчёт сторожа: ступень разгона, расход за сутки, что открыто. Без сети")
+    n.add_argument("--snyat-stop", action="store_true", help="Снять стоп после отказа Telegram — только по слову владельца")
+    n.add_argument("--vhod-davniy", action="store_true",
+                   help="Дату входа узнать не удалось, а вход сделан больше трёх суток назад — только по слову владельца")
     d = sub.add_parser("dialogs", help="Список чатов: id, название, тип")
     d.add_argument("--limit", type=int, default=50)
     d.add_argument("--out", required=True, help="Локальный JSON")
@@ -216,6 +230,8 @@ async def reactions(client, chat, message_id, limit):
                 break
             seen.add(offset)
     except RPCError as e:
+        if nagruzka.vid_otkaza(e):
+            raise  # «подождите» или отказ аккаунту — это стоп для всей работы, а не заметка в файле
         result["note"] = "Telegram ограничил список людей: " + type(e).__name__
     return result
 
@@ -442,6 +458,10 @@ def _session_lock():
 session_lock = contextmanager(_session_lock)  # без декоратора: строку с «@» проверка публикации путает с ником
 
 
+class Klient(nagruzka.Schetchik, TelegramClient):
+    """Клиент Telegram со сторожем нагрузки: считает обращения и держит паузы."""
+
+
 async def run(a):
     if getattr(a, "limit", 1) not in range(1, 201):
         raise SystemExit("limit — от 1 до 200.")
@@ -452,22 +472,33 @@ async def run(a):
         authorization = json.loads(Path(a.authorization).read_text(encoding="utf-8"))
         validate_plan(plan)
         check_authorization(plan, authorization)
+    vid = VID_KOMANDY.get(a.command, "otpravka")
+    sv = nagruzka.proverit(ROOT, vid)  # до выхода в сеть: стоп, свежий вход, дневной запас
     load_dotenv(ROOT / ".env")
     api_id = os.environ.get("TELEGRAM_API_ID", "")
     api_hash = os.environ.get("TELEGRAM_API_HASH", "")
     if not api_id.isdigit() or not api_hash:
         raise SystemExit("Заполните TELEGRAM_API_ID и TELEGRAM_API_HASH в файле .env рядом со скриптом.")
     # Без повторов отправка не задвоится. Но вход обязан повторить запрос: аккаунт может жить на другом сервере Telegram.
-    client = TelegramClient(str(ROOT / "personal_telegram"), int(api_id), api_hash,
-                            receive_updates=False, request_retries=1 if a.command == "login" else 0, connection_retries=2,
-                            flood_sleep_threshold=0, raise_last_call_error=True)
+    client = Klient(str(ROOT / "personal_telegram"), int(api_id), api_hash,
+                    receive_updates=False, request_retries=1 if a.command == "login" else 0, connection_retries=2,
+                    flood_sleep_threshold=0, raise_last_call_error=True)
+    nagruzka.nachat(ROOT, client, sv, vid, a.command)
+    vhod_rabotal = False
     try:
         if a.command == "login":
-            await client.start()
+            await client.connect()
+            byl = await client.is_user_authorized()
+            try:
+                await client.start()
+            finally:  # вход мог состояться, а запуск — упасть сразу после него: отметка не должна потеряться
+                if not byl and await client.is_user_authorized():
+                    nagruzka.otmetit_vhod(ROOT)  # новый вход: разгон начинается с первых суток
         else:
             await client.connect()
             if not await client.is_user_authorized():
-                raise SystemExit("Входа нет. Владелец запускает login в обычном терминале.")
+                raise SystemExit(nagruzka.vhod_propal(ROOT) or "Входа нет. Владелец запускает login в обычном терминале.")
+        vhod_rabotal = True
         if a.command in ("login", "status"):
             me = await client.get_me()
             print("Вход подтверждён:", me.first_name, "@" + me.username if me.username else "")
@@ -502,15 +533,36 @@ async def run(a):
         elif a.command == "download":
             files = await download(client, a.chat, a.limit, Path(a.out).resolve(), a.novoe)
             print("Файлов:", len(files), *files, sep="\n")
+    except nagruzka.Pritormozi as e:
+        raise SystemExit(str(e))
+    except RPCError as e:
+        stop = nagruzka.zapisat_otkaz(ROOT, e, a.command)  # отказ уровня аккаунта — стоп до срока или до слова владельца
+        if stop:
+            raise SystemExit(stop)
+        raise
     finally:
-        await client.disconnect()
+        try:
+            nagruzka.zakonchit(ROOT, client, vhod_rabotal=vhod_rabotal)
+        finally:
+            await client.disconnect()
+    if client.zaprosov == 0:  # проверка входа — уже обращение; ноль значит, что счёт сломан
+        print(nagruzka.SLEPOY)
+    if stroka := nagruzka.stroka(ROOT):
+        print(stroka)
 
 
 if __name__ == "__main__":
     try:
         arguments = cli()
-        with session_lock():
-            asyncio.run(run(arguments))
+        if arguments.command == "nagruzka":  # без сети и без замка: отчёт можно смотреть и во время скана
+            if arguments.snyat_stop:
+                print(nagruzka.snyat_stop(ROOT))
+            if arguments.vhod_davniy:
+                print(nagruzka.podtverdit_davniy_vhod(ROOT))
+            print(nagruzka.otchet(ROOT))
+        else:
+            with session_lock():
+                asyncio.run(run(arguments))
     except SystemExit:
         raise
     except Exception as e:

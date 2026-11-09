@@ -46,6 +46,10 @@ class Client:
                 yield x
 
 
+async def _nichego():
+    return None
+
+
 def csv_v(put, rows):
     with open(put, "w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerows(rows)
@@ -76,14 +80,150 @@ class IndexTests(unittest.IsolatedAsyncioTestCase):
         lyudey, novyh = await app.sobrat(cl, self.c, 365, 5, 100)
         self.assertEqual((lyudey, novyh), (1, 8))
         cl.history[201] += [m(9, "Созвонимся завтра?", hours_ago=0)]
+        cl.dialogs[0].message = cl.history[201][-1]  # Telegram показывает в списке чатов последнее сообщение
         lyudey, novyh = await app.sobrat(cl, self.c, 365, 5, 100)
         self.assertEqual(novyh, 1)
         self.assertEqual(cl.calls[-1], 8)  # второй раз — только новее последнего
+        lyudey, novyh = await app.sobrat(cl, self.c, 365, 5, 100)
+        self.assertEqual((lyudey, novyh, len(cl.calls)), (1, 0, 2))  # нового нет — за чатом к Telegram не ходим
         stil, tep, yaz, fmt = self.c.execute("select stil, teplota, yazyk, format from people where id=201").fetchone()
         self.assertIn("на «ты»", stil)
         self.assertEqual(tep, "тёплый")
         self.assertEqual(yaz, "русский")
         self.assertIn("знаков", fmt)
+
+    async def test_sobrat_ostanavlivaetsya_na_granice_chata_i_prodolzhaet(self):
+        cl = Client()
+        cl.history[204] = [m(i, hours_ago=50 - i) for i in range(1, 7)]
+        cl.dialogs.append(Dialog(204, "Борис", cl.history[204][-1]))
+        cl.hvatit = lambda: len(cl.calls) >= 1  # сторож: дневной запас выбран после первого чата
+        self.assertEqual(await app.sobrat(cl, self.c, 365, 5, 100), (1, 8))
+        self.assertIsNone(self.c.execute("select 1 from people where id=204").fetchone())
+        cl.hvatit = lambda: False  # следующие сутки
+        self.assertEqual(await app.sobrat(cl, self.c, 365, 5, 100), (2, 6))  # Анна уже в базе, докачан только Борис
+        self.assertEqual(len(cl.calls), 2)
+
+    async def test_obryv_na_seredine_chata_sohranyaet_prochitannoe(self):
+        cl = Client()
+
+        async def obryv(entity, reverse=True, min_id=0, offset_date=None):
+            for x in cl.history[201][:6]:
+                yield x
+            raise RuntimeError("сторож: притормози")
+
+        cl.iter_messages = obryv
+        with self.assertRaises(RuntimeError):
+            await app.sobrat(cl, self.c, 365, 5, 100)
+        last_id, msgs, stil = self.c.execute("select last_id, msgs, stil from people where id=201").fetchone()
+        self.assertEqual((last_id, msgs), (6, 6))
+        self.assertIsNotNone(stil)  # карточка пересчитана по прочитанному
+
+    def test_skan_bez_storozha_ne_zapuskaetsya(self):
+        with patch.object(app, "TG", self.d / "telegram"):
+            with self.assertRaises(SystemExit) as e:
+                app.nayti_storozha()
+        self.assertIn("nagruzka.py", str(e.exception))
+
+    def storozh_v_papke(self):
+        """Папка Telegram со сторожем из соседнего скила и давним входом. Нет соседа — тест пропускается."""
+        storozh = Path(__file__).resolve().parents[2] / "podklyuchit-telegram" / "scripts" / "nagruzka.py"
+        if not storozh.exists():
+            self.skipTest("скил podklyuchit-telegram не лежит рядом")
+        tg = self.d / "telegram"
+        tg.mkdir()
+        (tg / "nagruzka.py").write_text(storozh.read_text(encoding="utf-8"), encoding="utf-8")
+        p = patch.object(app, "TG", tg)
+        p.start()
+        self.addCleanup(p.stop)
+        n = app.nayti_storozha()
+        p = patch.object(app, "nayti_storozha", lambda: n)  # один и тот же модуль в тесте и в run
+        p.start()
+        self.addCleanup(p.stop)
+        n.otmetit_vhod(tg, n.seychas() - timedelta(days=30))
+        return tg, n
+
+    def pod(self, n, na_chat=1):
+        """Подставной клиент под сторожем: чтение одного чата стоит na_chat обращений."""
+        class Pod(n.Schetchik, Client):
+            async def connect(self): pass
+            async def disconnect(self): pass
+            async def is_user_authorized(self): return True
+
+            async def iter_messages(self, entity, **kwargs):
+                self.zaprosov += na_chat
+                async for x in Client.iter_messages(self, entity, **kwargs):
+                    yield x
+
+        cl = Pod()
+        cl.history[204] = [m(i, hours_ago=50 - i) for i in range(1, 7)]
+        cl.dialogs.append(Dialog(204, "Борис", cl.history[204][-1]))
+        return cl
+
+    SOBRAT = SimpleNamespace(command="sobrat", dney=365, min=5, limit=500)
+
+    async def test_skan_v_pervye_sutki_posle_vhoda_zakryt(self):
+        tg, n = self.storozh_v_papke()
+        n.otmetit_vhod(tg, n.seychas() - timedelta(hours=3))
+        with patch.object(app, "klient", side_effect=AssertionError("в сеть нельзя")):
+            with self.assertRaises(SystemExit) as e:
+                await app.run(self.SOBRAT)
+            self.assertIn("первые сутки", str(e.exception))
+            self.assertFalse((tg / ".telegram.lock").exists())
+            n.otmetit_vhod(tg, n.seychas() - timedelta(days=30))
+            n.zapisat_otkaz(tg, type("FloodWaitError", (Exception,), {"seconds": 900})(), "read")
+            with self.assertRaises(SystemExit) as e:  # Telegram назвал срок — скан не выходит в сеть
+                await app.run(self.SOBRAT)
+            self.assertIn("просил подождать", str(e.exception))
+
+    async def test_skan_pod_storozhem_idet_porciyami(self):
+        tg, n = self.storozh_v_papke()
+        sost = n.prochitat(tg)
+        sost["seansy"] = [[n.iso(n.seychas() - timedelta(hours=2)), 3000 - n.MIN_SKAN, "read"]]  # запаса хватит на один чат
+        n.sohranit(tg, sost)
+        cl = self.pod(n, na_chat=n.MIN_SKAN)
+        vyvod = []
+        with patch.object(app, "klient", lambda storozh=None: cl), patch.object(n.asyncio, "sleep", lambda sek: _nichego()), \
+                patch("builtins.print", lambda *a, **k: vyvod.append(" ".join(map(str, a)))):
+            await app.run(self.SOBRAT)
+        self.assertIn("Порция готова", "\n".join(vyvod))  # первый чат прочитан, на втором сторож остановил
+        self.assertIsNone(self.c.execute("select 1 from people where id=204").fetchone())
+        self.assertFalse((tg / ".telegram.lock").exists())
+        self.assertEqual(n.prochitat(tg)["seansy"][-1][1:], [n.MIN_SKAN, "sobrat"])  # расход попал в общий журнал
+        with self.assertRaises(SystemExit) as e:  # сразу повторить нельзя: запас выбран
+            await app.run(self.SOBRAT)
+        self.assertIn("Притормози", str(e.exception))
+
+    async def test_sboy_uborki_ne_ostavlyaet_zamok(self):
+        tg, n = self.storozh_v_papke()
+        cl = self.pod(n)
+        with patch.object(app, "klient", lambda storozh=None: cl), patch.object(n.asyncio, "sleep", lambda sek: _nichego()), \
+                patch.object(n, "zakonchit", side_effect=OSError("диск полон")), patch("builtins.print", lambda *a, **k: None):
+            with self.assertRaises(OSError):
+                await app.run(self.SOBRAT)
+        self.assertFalse((tg / ".telegram.lock").exists())  # иначе оба скила ответят «сессия занята»
+
+    async def test_chat_pri_obryve_ne_obeshchaet_dokachku(self):
+        tg, n = self.storozh_v_papke()
+        cl = self.pod(n)
+
+        async def obryv(*a, **k):
+            raise n.Pritormozi("Притормози: запуск вышел за дневной запас.")
+
+        with patch.object(app, "klient", lambda storozh=None: cl), patch.object(app, "iz_chata", obryv):
+            with self.assertRaises(SystemExit) as e:
+                await app.run(SimpleNamespace(command="chat", chat="Клуб", soobshcheniy=3000, vse=False))
+        self.assertIn("в базу ничего не записано", str(e.exception))
+        self.assertNotIn("докачает", str(e.exception))
+
+    async def test_sluzhebnoe_poslednee_soobshchenie_ne_kachaetsya_zanovo(self):
+        cl = Client()
+        zvonok = m(9, "", hours_ago=0, action=type("MessageActionPhoneCall", (), {})())
+        cl.history[201].append(zvonok)
+        cl.dialogs[0].message = zvonok  # переписка кончается звонком
+        for _ in range(3):
+            await app.sobrat(cl, self.c, 365, 5, 100)
+        zvonki, last_id = self.c.execute("select zvonki, last_id from people where id=201").fetchone()
+        self.assertEqual((zvonki, last_id, len(cl.calls)), (1, 9, 1))  # звонок посчитан один раз, за чатом сходили один раз
 
     def test_stil_reads_voice_and_formal(self):
         t = (NOW - timedelta(days=1)).isoformat()

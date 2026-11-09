@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from telethon.errors import ChatAdminRequiredError, FloodWaitError
 from telethon.tl.types import (User, PeerUser, Message, MessageReactions, ReactionCount,
                               ReactionEmoji, MessagePeerReaction, MessageEntityUrl, MessageReplyHeader)
 from telethon.tl.functions.messages import GetMessageReactionsListRequest, GetScheduledHistoryRequest
@@ -190,6 +191,20 @@ class SendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r["message"]["reactions"], [{"emoji": "🤝", "count": 2}])
         self.assertFalse(r["people_complete"])
         self.assertEqual(r["message"]["sender_id"], 200)
+
+    async def test_reactions_flood_wait_is_not_swallowed(self):
+        for oshibka, glotaem in ((ChatAdminRequiredError(request=None), True), (FloodWaitError(request=None, capture=300), False)):
+            class Otkaz(FakeClient):
+                async def __call__(self, request):
+                    raise oshibka
+
+            c = Otkaz()
+            c.messages[7].reactions = MessageReactions(results=[ReactionCount(ReactionEmoji("🤝"), 2)], can_see_list=True)
+            if glotaem:  # ограничение одного чата — заметка в файле
+                self.assertIn("ограничил", (await app.reactions(c, "200", 7, 100))["note"])
+            else:  # «подождите» всему аккаунту — наружу, чтобы сторож поставил стоп
+                with self.assertRaises(FloodWaitError):
+                    await app.reactions(c, "200", 7, 100)
 
     async def test_reactions_are_bound_to_message_and_paginated(self):
         self.c.messages[7].reactions = MessageReactions(

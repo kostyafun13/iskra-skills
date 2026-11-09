@@ -17,6 +17,8 @@
 
 Работает через уже подключённый Telegram (скил podklyuchit-telegram): та же сессия и тот же .env,
 по умолчанию в соседней папке connections/telegram. Только чтение — никому не пишет.
+Скан идёт под сторожем нагрузки из той же папки (nagruzka.py): в первые сутки после входа не запускается,
+дальше идёт порциями в пределах дневного запаса, при отказе Telegram останавливается до срока.
 Всё хранится локально в private/indeks.sqlite. Наружу — только внешняя таблица без имён и контактов.
 """
 import argparse
@@ -26,6 +28,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 import os
 from pathlib import Path
+import random
 import re
 import sqlite3
 import statistics
@@ -216,11 +219,25 @@ def obnovit_kartochku(c, pid):
               (stil(rows), teplota(*p), yazyk(rows), format_soobshcheniya(rows), datetime.now(timezone.utc).isoformat(), pid))
 
 
+def zakryt_dialog(c, pid, prishlo, minimum):
+    """После чтения переписки: пересчитать карточку. Возвращает, считается ли человек в базе."""
+    if c.execute("select msgs from people where id=?", (pid,)).fetchone()[0] < minimum:
+        return False
+    if prishlo:
+        obnovit_kartochku(c, pid)
+    return True
+
+
 async def sobrat(client, c, dney, minimum, limit):
-    """Личка с людьми (не боты, не группы) за окно дней. Уже собранное не качаем: только новее last_id."""
+    """Личка с людьми (не боты, не группы) за окно дней. Уже собранное не качаем: только новее last_id.
+    Сторож нагрузки выбрал дневной запас — останавливаемся на границе чата: следующий запуск продолжит с места."""
     since = datetime.now(timezone.utc) - timedelta(days=dney)
     novyh = lyudey = 0
+    hvatit = getattr(client, "hvatit", None)
+    pauza_chat = getattr(client, "pauza_chat", None)
     async for d in client.iter_dialogs(limit=limit):
+        if hvatit and hvatit():
+            break
         if not d.is_user or getattr(d.entity, "bot", False) or d.message is None:
             continue
         if d.message.date < since:
@@ -234,25 +251,33 @@ async def sobrat(client, c, dney, minimum, limit):
             c.execute("insert into people(id, name, username) values(?,?,?)",
                       (e.id, d.name, getattr(e, "username", None)))
         prishlo = 0
-        kwargs = {"reverse": True, "min_id": last_id} if last_id else {"reverse": True, "offset_date": since}
-        async for m in client.iter_messages(e, **kwargs):
-            if getattr(m, "action", None) is not None:
-                if "PhoneCall" in type(m.action).__name__:
-                    c.execute("update people set zvonki=zvonki+1, posl_zvonok=max(coalesce(posl_zvonok, ''), ?) "
-                              "where id=?", (m.date.isoformat()[:10], e.id))
-                continue
-            golos = int(bool(getattr(m, "voice", None)))
-            c.execute("insert or ignore into msgs values(?,?,?,?,?,?,?)",
-                      (e.id, m.id, m.date.isoformat(), int(bool(m.out)), len(m.message or ""), golos, (m.message or "")[:500]))
-            c.execute("update people set last_id=max(last_id, ?), msgs=msgs+1, first_at=coalesce(first_at, ?), "
-                      "last_at=?, last_out=? where id=?",
-                      (m.id, m.date.isoformat(), m.date.isoformat(), int(bool(m.out)), e.id))
-            prishlo += 1
-        if c.execute("select msgs from people where id=?", (e.id,)).fetchone()[0] < minimum:
+        if not (last_id and d.message.id <= last_id):  # последнее сообщение уже в базе — за этим чатом к Telegram не ходим
+            kwargs = {"reverse": True, "min_id": last_id} if last_id else {"reverse": True, "offset_date": since}
+            try:
+                async for m in client.iter_messages(e, **kwargs):
+                    if getattr(m, "action", None) is not None:
+                        if "PhoneCall" in type(m.action).__name__:
+                            c.execute("update people set zvonki=zvonki+1, posl_zvonok=max(coalesce(posl_zvonok, ''), ?) "
+                                      "where id=?", (m.date.isoformat()[:10], e.id))
+                        # Служебное тоже прочитано: иначе звонок считается заново при каждом запуске, а чат не пропускается.
+                        c.execute("update people set last_id=max(last_id, ?) where id=?", (m.id, e.id))
+                        continue
+                    golos = int(bool(getattr(m, "voice", None)))
+                    c.execute("insert or ignore into msgs values(?,?,?,?,?,?,?)",
+                              (e.id, m.id, m.date.isoformat(), int(bool(m.out)), len(m.message or ""), golos, (m.message or "")[:500]))
+                    c.execute("update people set last_id=max(last_id, ?), msgs=msgs+1, first_at=coalesce(first_at, ?), "
+                              "last_at=?, last_out=? where id=?",
+                              (m.id, m.date.isoformat(), m.date.isoformat(), int(bool(m.out)), e.id))
+                    prishlo += 1
+            except Exception:
+                zakryt_dialog(c, e.id, prishlo, minimum)  # чат оборван на середине: прочитанное остаётся в базе
+                c.commit()
+                raise
+            if pauza_chat:
+                await asyncio.sleep(random.uniform(*pauza_chat))
+        if not zakryt_dialog(c, e.id, prishlo, minimum):
             continue
-        if prishlo:
-            obnovit_kartochku(c, e.id)
-            novyh += prishlo
+        novyh += prishlo
         lyudey += 1
         c.commit()
     c.commit()
@@ -1085,39 +1110,88 @@ def najti(c, kto):
     return r
 
 
-def klient():
+def klient(storozh=None):
     from dotenv import load_dotenv
     from telethon import TelegramClient
     load_dotenv(TG / ".env")
     api_id, api_hash = os.environ.get("TELEGRAM_API_ID", ""), os.environ.get("TELEGRAM_API_HASH", "")
     if not api_id.isdigit() or not api_hash:
         raise SystemExit(f"Нет ключей Telegram в {TG / '.env'}. Сначала скил podklyuchit-telegram.")
-    return TelegramClient(str(TG / "personal_telegram"), int(api_id), api_hash, receive_updates=False)
+    # Со сторожем клиент считает обращения и держит паузы. Любое «подождите» от Telegram — сразу стоп, без тихого ожидания.
+    klass = type("Klient", (storozh.Schetchik, TelegramClient), {}) if storozh else TelegramClient
+    return klass(str(TG / "personal_telegram"), int(api_id), api_hash, receive_updates=False, flood_sleep_threshold=0)
+
+
+def nayti_storozha():
+    """Сторож нагрузки лежит в папке Telegram: вход один, поэтому и счёт обращений общий."""
+    f = TG / "nagruzka.py"
+    if not f.exists():
+        raise SystemExit(f"В папке {TG} нет nagruzka.py — сторожа нагрузки. Обнови подключение Telegram: скопируй "
+                         "scripts/ скила podklyuchit-telegram поверх старых скриптов; .env, файл входа и private/ не трогай. "
+                         "Без сторожа большой скан не запускаю.")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("nagruzka", f)
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    return modul
 
 
 async def run(a):
     c = db()
     if a.command in ("sobrat", "chat"):
+        n = nayti_storozha()
+        vid = "uchastniki" if a.command == "chat" and a.vse else "skan"
+        sv = n.proverit(TG, vid)  # до выхода в сеть: стоп, первые сутки после входа, дневной запас
         lock = TG / ".telegram.lock"
         if lock.exists():
             raise SystemExit("Сессия Telegram занята другим процессом. Дождитесь его и повторите.")
         lock.write_text(str(os.getpid()))
-        cl = klient()
+        cl, vhod_rabotal = None, False
         try:
+            cl = klient(n)
+            n.nachat(TG, cl, sv, vid, a.command)
             await cl.connect()
             if not await cl.is_user_authorized():
-                raise SystemExit("Telegram не подключён. Сначала login в скиле podklyuchit-telegram.")
+                raise SystemExit(n.vhod_propal(TG) or "Telegram не подключён. Сначала login в скиле podklyuchit-telegram.")
+            vhod_rabotal = True
             if a.command == "sobrat":
                 lyudey, novyh = await sobrat(cl, c, a.dney, a.min, a.limit)
             else:
                 novyh, vsego = await iz_chata(cl, c, a.chat, a.soobshcheniy, a.vse)
+        except n.Pritormozi as e:
+            c.commit()
+            raise SystemExit(f"{e} " + ("Прочитанное сохранено. После срока повтори ту же команду: скан докачает с места."
+                                        if a.command == "sobrat" else
+                                        "Чат не дочитан, в базу ничего не записано. После срока повтори с меньшим --soobshcheniy."))
+        except Exception as e:
+            c.commit()
+            if "RPCError" not in {k.__name__ for k in type(e).__mro__}:
+                raise
+            # Любой отказ Telegram останавливает скан. Отказ уровня аккаунта ещё и закрывает работу до срока.
+            raise SystemExit(n.zapisat_otkaz(TG, e, a.command)
+                             or f"Скан остановлен отказом Telegram: {type(e).__name__}. "
+                             + ("Прочитанное сохранено." if a.command == "sobrat" else "В базу ничего не записано.")
+                             + " Сразу не повторяй: сначала разбери причину.")
         finally:
-            await cl.disconnect()
-            lock.unlink(missing_ok=True)
+            try:
+                if cl is not None:
+                    try:
+                        n.zakonchit(TG, cl, vhod_rabotal=vhod_rabotal)
+                    finally:
+                        await cl.disconnect()
+            finally:
+                lock.unlink(missing_ok=True)  # замок снимаем при любом сбое уборки: иначе встанут оба скила
         if a.command == "sobrat":
             print(f"Карточек: {lyudey}, новых сообщений докачано: {novyh} → {DB}")
+            if cl.hvatit():
+                print(f"Порция готова: дневной запас обращений к Telegram выбран. Повтори ту же команду "
+                      f"после {n.chasy(n.svodka(TG)['mozhno_skan'])}: скан докачает остальное с места.")
         else:
             print(f"Из чата: {vsego} человек, новых холодных {novyh}. Дальше holodnye — отметь, к кому интересно самому.")
+        if cl.zaprosov == 0:  # проверка входа — уже обращение; ноль значит, что счёт сломан
+            print(n.SLEPOY)
+        if stroka := n.stroka(TG):
+            print(stroka)
     elif a.command == "iz_vygruzki":
         imena = json.loads(Path(a.imena).read_text(encoding="utf-8")) if a.imena else None
         lyudey, novyh = iz_vygruzki(c, a.papka, a.min, imena)
