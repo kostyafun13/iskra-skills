@@ -79,7 +79,7 @@ def setka(chislo):
         return chislo, "grid", ""
     if chislo <= 10:
         return (chislo + 1) // 2, "grid dva", ""
-    kol = min(12, max(6, math.ceil(chislo / 4)))
+    kol = min(14, max(6, math.ceil(chislo / 4)))
     ryadov = math.ceil(chislo / kol)
     av = 96 if ryadov <= 2 else 82 if ryadov <= 3 else 64 if ryadov <= 4 else 54
     return kol, "grid mnogo", f";--av:{av}px;--fs:{14 if ryadov <= 3 else 12 if ryadov <= 4 else 11}px"
