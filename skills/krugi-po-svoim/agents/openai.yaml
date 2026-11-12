@@ -1,0 +1,7 @@
+interface:
+  display_name: "Круги по своим"
+  short_description: "Сильные фаундеры под твои критерии и полная цепочка входа к каждому через своих людей"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $krugi-po-svoim: найди сильных фаундеров и цепочку входа к ним через своих."
+policy:
+  allow_implicit_invocation: true
