@@ -234,6 +234,30 @@ class Telegram(unittest.TestCase):
                 pass  # sips на пустышке падает — важно, куда целится
             self.assertTrue((Path(t) / "prevyu").is_dir())
 
+    def test_nezavershennyy_import_ishchem_snova(self):
+        vhod = [{"k": "a", "telefon": "80000000001"}, {"k": "b", "telefon": "80000000002"}]
+        z = tg.zadachi_po_telefonu(vhod, {"a": {"import": True, "ubrano": False}, "b": {"tg": False, "ubrano": True}})
+        self.assertEqual([x[0] for x in z], ["a"])  # ответ импорта оборвался — итога нет, ищем снова
+        self.assertEqual(tg.neubrannye({"a": {"import": True, "ubrano": False}, "b": {"import": True, "ubrano": True}}), ["a"])
+
+    def test_yavnyy_otkaz(self):
+        class RPCError(Exception):
+            code = None
+
+        class BadRequestError(RPCError):
+            code = 400
+
+        class TimedOutError(RPCError):
+            code = -503
+
+        class ServerError(RPCError):
+            code = 500
+
+        self.assertTrue(tg.yavnyy_otkaz(BadRequestError()))
+        self.assertFalse(tg.yavnyy_otkaz(TimedOutError()))  # могло уйти — не повторяем
+        self.assertFalse(tg.yavnyy_otkaz(ServerError()))
+        self.assertFalse(tg.yavnyy_otkaz(ConnectionError()))
+
     def test_bez_storozha_ne_rabotaet(self):
         async def popytka(papka):
             async with tg.seans(Path(papka), "chtenie", "test"):
@@ -308,6 +332,19 @@ class Partner(unittest.TestCase):
 
         partner.zapisat_list(Sh(), "id", "Лист", [["a"], ["b"]], bylo_strok=5)
         self.assertEqual(vyzovy, [("update", "'Лист'!A1"), ("clear", "'Лист'!A3:Z5")])  # сначала запись, потом хвост
+
+    def test_proverit_otbor(self):
+        staroe = [["", "", "", "", "", "", "", "", k] for k in "abcd"]
+        with self.assertRaises(SystemExit):
+            partner.proverit_otbor(staroe, [])
+        with self.assertRaises(SystemExit):
+            partner.proverit_otbor(staroe, [["т", "и", "к", "п", "a"]])  # выпадут 3 из 4
+        partner.proverit_otbor(staroe, [["т", "и", "к", "п", k] for k in "abc"])
+
+    def test_bezopasno_partnera(self):
+        self.assertEqual(partner.bezopasno_partnera("+7 900 000-00-00"), "'+7 900 000-00-00")
+        self.assertEqual(partner.bezopasno_partnera("=HYPERLINK(1)"), "=HYPERLINK(1)")  # формулу партнёра не ломаем
+        self.assertEqual(partner.bezopasno_partnera(45000), 45000)
 
     def test_bezopasno(self):
         self.assertEqual(partner.bezopasno("=HYPERLINK(1)"), "'=HYPERLINK(1)")

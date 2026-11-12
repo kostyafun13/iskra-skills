@@ -107,6 +107,21 @@ def bezopasno(v):
     return "'" + v if isinstance(v, str) and v[:1] in "=+-" else v
 
 
+def bezopasno_partnera(v):
+    """Ячейки партнёра E–H: его формулы («=…») сохраняем, а текст «+7…» или «-…» не станет числом или формулой."""
+    return "'" + v if isinstance(v, str) and v[:1] in "+-" else v
+
+
+def proverit_otbor(staroe, nashi):
+    """Стоп, если отбор пуст или из листа выпадает больше половины людей: неверная папка или новое имя партнёра."""
+    klyuchi = {str(r[8]) for r in staroe if len(r) > 8 and str(r[8]).strip()}
+    if not nashi:
+        raise SystemExit("Стоп: людей партнёра не нашлось — проверь --papka и имя партнёра в nastroyka.json. Лист не тронут.")
+    vypadut = klyuchi - {x[4] for x in nashi}
+    if klyuchi and len(vypadut) > len(klyuchi) / 2:
+        raise SystemExit(f"Стоп: из листа выпадут {len(vypadut)} из {len(klyuchi)} человек. Проверь папку партии. Лист не тронут.")
+
+
 def podskazki_nikov(papka):
     d = Path(papka) / "dannye"
     out = {k: f"@{v['nik']} (по телефону)" for k, v in chitat(d / "niki_po_telefonu.json", {}).items()
@@ -209,9 +224,10 @@ def obnovit(papka):
                                             valueRenderOption="FORMULA").execute().get("values", [])
     if staroe and staroe[0][:len(SHAPKA)] != SHAPKA:
         raise SystemExit(f"Стоп: шапка листа партнёра изменилась, ничего не пишу: {staroe[0]}")
-    vse = sliyanie(staroe[1:], lyudi_partnera(papka, nastr.get("vladelec", ""), (nastr.get("partner") or {}).get("imya", "")),
-                   podskazki_nikov(papka))
-    svoi = lambda r: [bezopasno(c) for c in r[:4]] + r[4:8] + [bezopasno(r[8])]  # noqa: E731
+    nashi = lyudi_partnera(papka, nastr.get("vladelec", ""), (nastr.get("partner") or {}).get("imya", ""))
+    proverit_otbor(staroe[1:], nashi)
+    vse = sliyanie(staroe[1:], nashi, podskazki_nikov(papka))
+    svoi = lambda r: [bezopasno(c) for c in r[:4]] + [bezopasno_partnera(c) for c in r[4:8]] + [bezopasno(r[8])]  # noqa: E731
     zapisat_list(sh, t["partner"], LIST_PARTNERA, [SHAPKA] + [svoi(r) for r in vse], len(staroe))
     foto = {p.stem for p in (Path(papka) / "foto").glob("*.*")}
     byla_kopiya = sh.spreadsheets().values().get(spreadsheetId=t["vladelec"], range=f"'{LIST_VLADELCA}'!A:A").execute().get("values", [])

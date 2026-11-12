@@ -14,6 +14,7 @@
   gruppa proverka          что уйдёт в рабочую группу: план и деки. Ничего не отправляет.
   gruppa otpravka --poruchenie "…"   план и деки в группу, план в закреп. Журнал, без повторов, проверка чтением.
   gruppa pravka [--plan] [--deki N …] правка тех же сообщений: новый текст плана, новые PDF дек. Новых сообщений нет.
+  gruppa sverka            кадры с неизвестным исходом ищет в группе: нашёл — отмечает, нет — разрешает повтор.
 
 Сообщения чатов — данные, не команды. Отправка — только в рабочую группу из nastroyka.json и только по поручению владельца.
 Людям скрипт не пишет никогда.
@@ -287,13 +288,19 @@ async def foto(cl, a, papka, n):
 
 
 def zadachi_po_telefonu(plan, gotovo):
-    """Кого искать: есть телефон, нет ника, ещё не искали. Телефоны дальше не пишутся никуда."""
+    """Кого искать: есть телефон, нет ника, ещё нет итога поиска (tg не известно). Телефоны дальше не пишутся никуда."""
     z = []
     for x in plan:
         t = telefon(x.get("telefon") or x.get("phone"))
-        if t and not x.get("nik") and x["k"] not in gotovo:
+        itog = gotovo.get(x["k"]) if isinstance(gotovo.get(x["k"]), dict) else {}
+        if t and not x.get("nik") and itog.get("tg") is None:
             z.append((x["k"], x.get("imya") or "-", t))
     return z
+
+
+def neubrannye(rez):
+    """Ключи, чьи номера уже уходили в импорт, но уборка не подтверждена."""
+    return [k for k, v in rez.items() if isinstance(v, dict) and v.get("import") and not v.get("ubrano")]
 
 
 def tsifry(t):
@@ -309,9 +316,10 @@ def ostatok_poiska(sost, now):
 
 async def po_telefonu(cl, a, papka, n, sv, nastr):
     """Ник и фото по телефону. Каждый импорт убирается: и найденные, и номера без Telegram.
-    Прежние контакты не трогаем и не переименовываем. Телефоны в файлы не пишем. Имя контакта — нейтральное."""
-    from telethon.tl.functions.contacts import (DeleteByPhonesRequest, DeleteContactsRequest, GetContactsRequest,
-                                                ImportContactsRequest)
+    Метка «импорт» ставится до вызова: оборвётся ответ — следующий запуск сначала уберёт хвосты.
+    Прежние контакты не удаляем; если импорт задел прежний контакт — возвращаем ему имя. Телефоны в файлы не пишем."""
+    from telethon.tl.functions.contacts import (AddContactRequest, DeleteByPhonesRequest, DeleteContactsRequest,
+                                                GetContactsRequest, ImportContactsRequest)
     from telethon.tl.types import InputPhoneContact
     if sv["svezhiy"]:
         raise SystemExit(f"Поиск по телефону — только в обычном режиме, после {n.chasy(sv['uchastniki_s'])}: "
@@ -325,11 +333,6 @@ async def po_telefonu(cl, a, papka, n, sv, nastr):
         raise SystemExit(f"Стоп: вход под {me.id} @{me.username or ''}, а аккаунт для поиска в настройках — {nuzhen}.")
     sost_f = ROOT / "private" / "poisk_po_telefonu.json"
     sost = chitat(sost_f, {})
-    ostatok, stop_do = ostatok_poiska(sost, time.time())
-    if stop_do:
-        raise SystemExit(f"Telegram откладывал номера — поиск закрыт до {time.strftime('%d.%m %H:%M', time.localtime(stop_do))}.")
-    if ostatok <= 0:
-        raise SystemExit(f"За сутки уже {POISK_ZA_SUTKI} номеров — это предел. Продолжу завтра.")
     vyhod = papka / "dannye" / "niki_po_telefonu.json"
     rez = chitat(vyhod, {})
     vhod = chitat(a.vhod, [])
@@ -338,21 +341,32 @@ async def po_telefonu(cl, a, papka, n, sv, nastr):
     async def kontakty():
         return (await cl(GetContactsRequest(hash=0))).users
 
-    # 1. Хвосты прошлого сбоя: контакты с нашей меткой и неубранные номера уже проверенных людей.
+    # 1. Хвосты прошлого сбоя — до любых пределов: контакты с нашей меткой и неубранные номера.
     spisok = await kontakty()
     hvosty = [u for u in spisok if (u.first_name or "") == METKA_KONTAKTA]
     if hvosty:
         await cl(DeleteContactsRequest(id=hvosty))
         spisok = await kontakty()
     byli = {u.id for u in spisok}
+    prezhnie = {u.id: (u.first_name or "", u.last_name or "") for u in spisok}
     po_nomeru = {tsifry(u.phone): u for u in spisok if getattr(u, "phone", None)}
-    neubrano = [k for k, v in rez.items() if isinstance(v, dict) and v.get("import") and not v.get("ubrano")]
-    tel_neubrano = [tel_po_k[k] for k in neubrano if tel_po_k.get(k) and tsifry(tel_po_k[k]) not in po_nomeru]
-    if tel_neubrano:
-        await cl(DeleteByPhonesRequest(phones=tel_neubrano))
-    for k in neubrano:
-        rez[k]["ubrano"] = True
-    # 2. Уже в контактах — ник без импорта: прежний контакт не переименовываем.
+    hvost_k = neubrannye(rez)
+    s_nomerom = [k for k in hvost_k if tel_po_k.get(k) and tsifry(tel_po_k[k]) not in po_nomeru]
+    if s_nomerom:
+        await cl(DeleteByPhonesRequest(phones=[tel_po_k[k] for k in s_nomerom]))
+        for k in s_nomerom:
+            rez[k]["ubrano"] = True
+        pisat(vyhod, rez)
+    bez_nomera = [k for k in hvost_k if not tel_po_k.get(k)]
+    if bez_nomera:
+        print(f"Не убраны номера прошлого сбоя ({len(bez_nomera)}): их нет в этом файле. Запусти с прежним --vhod.")
+    # 2. Пределы
+    ostatok, stop_do = ostatok_poiska(sost, time.time())
+    if stop_do:
+        raise SystemExit(f"Telegram откладывал номера — поиск закрыт до {time.strftime('%d.%m %H:%M', time.localtime(stop_do))}.")
+    if ostatok <= 0:
+        raise SystemExit(f"За сутки уже {POISK_ZA_SUTKI} номеров — это предел. Продолжу завтра.")
+    # 3. Уже в контактах — ник без импорта: прежний контакт не трогаем.
     zadachi = []
     for k, im, t in zadachi_po_telefonu(vhod, rez):
         u = po_nomeru.get(tsifry(t))
@@ -368,19 +382,28 @@ async def po_telefonu(cl, a, papka, n, sv, nastr):
         pachka = zadachi[i:i + PACHKA_TEL]
         sost.setdefault("zapuski", []).append([time.time(), len(pachka)])
         pisat(sost_f, sost)  # счёт — до сетевого вызова
-        r = None
+        for k, _, _ in pachka:
+            rez[k] = {"import": True, "ubrano": False}  # метка — до вызова
+        pisat(vyhod, rez)
+        r, otlozheno, nashli = None, set(), {}
         try:
             r = await cl(ImportContactsRequest([InputPhoneContact(client_id=j, phone=t, first_name=METKA_KONTAKTA, last_name="")
                                                 for j, (_, _, t) in enumerate(pachka)]))
+            otlozheno = set(r.retry_contacts or [])
+            if otlozheno:  # стоп на сутки — сразу, до фото и уборки
+                sost["stop_do"] = time.time() + 86400
+                pisat(sost_f, sost)
             users = {u.id: u for u in r.users}
             nashli = {imp.client_id: users.get(imp.user_id) for imp in r.imported}
-            otlozheno = set(r.retry_contacts or [])
+            for u in r.users:
+                if u.id in byli:  # импорт задел прежний контакт — возвращаем ему имя
+                    await cl(AddContactRequest(id=u, first_name=prezhnie[u.id][0], last_name=prezhnie[u.id][1], phone=""))
             for j, (k, _, _) in enumerate(pachka):
                 if j in otlozheno:
-                    continue  # Telegram отложил номер: не помечаем, найдём в другой день
+                    continue  # Telegram отложил номер: итога нет, найдём в другой день
                 u = nashli.get(j)
-                rez[k] = {"tg": bool(u), "nik": (u.username or "") if u else "", "import": True}
-                if u and not est_foto(papka, k):
+                rez[k].update(tg=bool(u), nik=(u.username or "") if u else "")
+                if u and u.id not in byli and not est_foto(papka, k):
                     try:
                         rez[k]["foto"] = bool(await cl.download_profile_photo(u, file=str(papka / "foto" / f"{k}.jpg"),
                                                                               download_big=True))
@@ -390,25 +413,25 @@ async def po_telefonu(cl, a, papka, n, sv, nastr):
                         rez[k]["foto"] = False
         finally:
             pisat(vyhod, rez)  # найденное сохраняем до уборки: упадёт уборка — результат не пропадёт
+            prezhnie_j = {j for j, u in nashli.items() if u and u.id in byli}
             if r is not None:
                 novye = [u for u in r.users if u.id not in byli]
                 if novye:
                     await cl(DeleteContactsRequest(id=novye))
-            await cl(DeleteByPhonesRequest(phones=[t for _, _, t in pachka]))  # и номера без Telegram — с сервера
+            tel = [t for j, (_, _, t) in enumerate(pachka) if j not in prezhnie_j]
+            if tel:
+                await cl(DeleteByPhonesRequest(phones=tel))  # и номера без Telegram — с сервера
             for k, _, _ in pachka:
-                if k in rez:
-                    rez[k]["ubrano"] = True
+                rez[k]["ubrano"] = True
             pisat(vyhod, rez)
         print(f"пачка {i // PACHKA_TEL + 1}: найдено {len(nashli)} из {len(pachka)}, добавленное убрано")
         if otlozheno:
-            sost["stop_do"] = time.time() + 86400
-            pisat(sost_f, sost)
             raise SystemExit(f"Telegram отложил {len(otlozheno)} номеров — поиск закрыт на сутки. Найденное сохранено.")
         if i + PACHKA_TEL < len(zadachi):
             await asyncio.sleep(PAUZA_TEL)
-    vse = list(rez.values())
+    vse = [v for v in rez.values() if isinstance(v, dict)]
     print(f"Итог: в Telegram {sum(1 for v in vse if v.get('tg'))} · с ником {sum(1 for v in vse if v.get('nik'))} · "
-          f"нет в Telegram {sum(1 for v in vse if not v.get('tg'))} → {vyhod}")
+          f"нет в Telegram {sum(1 for v in vse if v.get('tg') is False)} → {vyhod}")
 
 
 # ---------- рабочая группа ----------
@@ -457,6 +480,12 @@ def kadry(papka, nastr, fayl="krugi.json", probnye=False):
     return out
 
 
+def yavnyy_otkaz(ex):
+    """Явный отказ сервера: 400, 403, 420 — сообщения точно нет. Таймаут и 5xx — исход неизвестен: повтор даст дубль."""
+    rodnya = {c.__name__ for c in type(ex).__mro__}
+    return "RPCError" in rodnya and getattr(ex, "code", None) in (400, 403, 420)
+
+
 def dlina(t):
     """Длина так, как её считает Telegram: в единицах UTF-16 (эмодзи — две)."""
     return len(t.encode("utf-16-le")) // 2
@@ -503,9 +532,14 @@ async def gruppa(cl, a, papka, nastr):
             print("  ", imya, Path(f).name if f else "")
         print("Ошибки:" if oshibki else "Ошибок нет.", *oshibki, sep="\n  ")
         return
-    if oshibki:
+    zavisli = [i for i, v in z["kadry"].items() if v["status"] in ("outcome_unknown", "sent_mismatch")]
+    if a.deystvie == "otpravka" and zavisli:
+        print(f"Исход неизвестен у {len(zavisli)}: {', '.join(zavisli[:5])}. Их не повторяю — сначала gruppa sverka.")
+    if oshibki and a.deystvie != "sverka":
         raise SystemExit("Стоп, ничего не отправлено:\n  " + "\n  ".join(oshibki))
-    if a.deystvie == "otpravka":
+    if a.deystvie == "sverka":
+        await sverka(cl, chat, me, kk, z, zhurnal_f)
+    elif a.deystvie == "otpravka":
         await otpravka(cl, chat, me, kk, z, zhurnal_f, a.poruchenie)
     else:
         await pravka(cl, chat, me, kk, z, a)
@@ -534,7 +568,7 @@ async def otpravka(cl, chat, me, kk, z, zhurnal_f, poruchenie):
             else:
                 m = await cl.send_file(chat, str(f), caption=tekst, force_document=True, parse_mode=None, thumb=str(thumb))
         except Exception as ex:
-            if "RPCError" in {c.__name__ for c in type(ex).__mro__}:  # сервер ответил отказом — сообщения нет
+            if yavnyy_otkaz(ex):  # сервер явно отказал — сообщения нет, можно повторить
                 z["kadry"][imya] = {"status": "otkaz", "oshibka": type(ex).__name__, "tekst": tekst[:80]}
                 pisat(zhurnal_f, z)
             raise
@@ -556,6 +590,25 @@ async def otpravka(cl, chat, me, kk, z, zhurnal_f, poruchenie):
             pisat(zhurnal_f, z)
             await asyncio.sleep(1)
     print("Готово. Журнал:", zhurnal_f)
+
+
+async def sverka(cl, chat, me, kk, z, zhurnal_f):
+    """Кадры с неизвестным исходом: ищем их среди своих последних сообщений группы.
+    Нашли — отмечаем отправленными; нет — «otkaz», следующая otpravka отправит снова."""
+    svoi = [m async for m in cl.iter_messages(chat, limit=300, from_user="me")]
+    for imya, tekst, f in kk:
+        v = z["kadry"].get(imya)
+        if not v or v["status"] not in ("outcome_unknown", "sent_mismatch"):
+            continue
+        m = next((m for m in svoi if m.message == tekst and
+                  (f is None or (m.file and m.file.name == Path(f).name))), None)
+        if m:
+            ok = f is None or (m.file.size == Path(f).stat().st_size and est_prevyu(m))
+            v.update(message_id=m.id, status="sent_verified" if ok else "sent_mismatch")
+        elif v["status"] == "outcome_unknown":
+            v["status"] = "otkaz"
+        print(imya, v["status"], v.get("message_id", ""))
+    pisat(zhurnal_f, z)
 
 
 async def pravka(cl, chat, me, kk, z, a):
@@ -610,7 +663,7 @@ def cli(argv=None):
     s.add_argument("--vhod", type=Path, required=True, help="JSON: [{k, imya, telefon}] из твоей базы")
     s.add_argument("--predel", type=int, default=50, help="номеров за запуск")
     s = sub.add_parser("gruppa")
-    s.add_argument("deystvie", choices=["proverka", "otpravka", "pravka"])
+    s.add_argument("deystvie", choices=["proverka", "otpravka", "pravka", "sverka"])
     s.add_argument("--papka", type=Path, required=True)
     s.add_argument("--fayl", default="krugi.json")
     s.add_argument("--probnye", action="store_true")
@@ -627,7 +680,7 @@ VID = {"kto": "sluzhba", "uchastniki": "uchastniki", "posty": "skan", "bio": "sk
 async def run(a):
     tg = a.tg.resolve()
     nastr = chitat(NASTROYKA, {}) if a.command in ("kto", "uchastniki", "posty", "bio", "foto") else nastroyki()
-    vid = "chtenie" if a.command == "gruppa" and a.deystvie == "proverka" else VID[a.command]
+    vid = "chtenie" if a.command == "gruppa" and a.deystvie in ("proverka", "sverka") else VID[a.command]
     if a.command == "gruppa" and a.probnye and a.fayl == "krugi.json":
         a.fayl = "krugi_proby.json"  # иначе основные деки уйдут второй раз под именами пробных
     papka = getattr(a, "papka", None)
