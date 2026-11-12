@@ -1,0 +1,7 @@
+interface:
+  display_name: "Круги"
+  short_description: "Встречи 4–8 фаундеров с общим покупателем: отбор, источники, дека, рабочая группа и лист партнёра"
+  brand_color: "#dc0077"
+  default_prompt: "Используй $krugi: собери круги фаундеров с общим покупателем."
+policy:
+  allow_implicit_invocation: true
