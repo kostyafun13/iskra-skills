@@ -70,6 +70,28 @@ class Deka(unittest.TestCase):
         oblozhka = h.split("</section>")[0]
         self.assertEqual(oblozhka.count("Иван Петров"), 1)
 
+    def test_bolshoy_krug_setkoy(self):
+        self.assertEqual(deka.setka(4)[:2], (4, "grid"))
+        self.assertEqual(deka.setka(7)[:2], (4, "grid dva"))
+        kol, cls, stil = deka.setka(48)
+        self.assertEqual((kol, cls), (12, "grid mnogo"))
+        h = self.html([chelovek(str(i), f"Имя {i}") for i in range(30)])
+        self.assertIn('class="grid mnogo"', h)
+        self.assertNotIn("Компания · суть</span>", h.split("</section>")[0])  # в большом круге компании на обложке нет
+
+    def test_kicker_kruga(self):
+        with tempfile.TemporaryDirectory() as t:
+            h = deka.html_kruga({"n": 1, "tema": "HR", "kicker": "Большой круг"}, {"mysl": "м", "lyudi": [chelovek("a", "А Б")]}, self.n, t)
+        self.assertIn(">Большой круг<", h)
+        self.assertEqual(deka.imya_pdf("/x", {"tema": "HR", "kicker": "Большой круг"}, self.n).name, "Большой круг — HR.pdf")
+
+    def test_kartochka_odin_slayd(self):
+        with tempfile.TemporaryDirectory() as t:
+            h = deka.html_kartochki(chelovek("a", "Иван Петров"), self.n, t)
+        self.assertEqual(h.count("<section"), 1)
+        self.assertIn("Иван Петров", h)
+        self.assertIn("С кем в круге", h)
+
     def test_imya_pdf(self):
         f = deka.imya_pdf("/x", {"n": 3, "tema": "Стройка: подрядчики/контроль"}, self.n)
         self.assertEqual(f.name, "Круг — Стройка  подрядчики контроль.pdf")

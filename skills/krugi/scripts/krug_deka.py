@@ -12,7 +12,11 @@
   foto/<k>.jpg|png         аватарки; нет фото — инициалы в круге
 Настройки — private/nastroyka.json рядом со скриптом (образец nastroyka.example.json).
 
-Запуск: python3 -I krug_deka.py --papka private/<партия> [номера кругов]
+Большой круг (по ЛПР заказчиков, 11–50 человек) — тот же формат: обложка сеткой до 12 в ряд, поле "kicker" круга
+  меняет надпись («Большой круг»), полоса внизу слайда — из поля svyaz (например, «Продаёт… Даёт выход… Малый круг…»).
+Карточки: --kartochki — слайд каждого человека отдельным PDF kartochki/<k>.pdf; код карточки — ключ k.
+
+Запуск: python3 -I krug_deka.py --papka private/<партия> [--kartochki] [номера кругов]
 Нужен Playwright с Chromium: .venv/bin/pip install playwright && .venv/bin/playwright install chromium
 """
 import argparse
@@ -20,6 +24,7 @@ import asyncio
 import base64
 import html as H
 import json
+import math
 import re
 from pathlib import Path
 
@@ -68,17 +73,29 @@ def shapka(n):
     return f'<header>{logo}<span class="site">{H.escape(n["sayt"])}</span></header>'
 
 
-def oblozhka(tema, mysl, lyudi, n, papka):
-    kol = len(lyudi) if len(lyudi) <= 5 else (len(lyudi) + 1) // 2  # до 5 — один ряд, больше — два
+def setka(chislo):
+    """Колонки, класс сетки и стиль: до 5 — один ряд, до 10 — два, больше — сетка до 12 в ряд (большой круг)."""
+    if chislo <= 5:
+        return chislo, "grid", ""
+    if chislo <= 10:
+        return (chislo + 1) // 2, "grid dva", ""
+    kol = min(12, max(6, math.ceil(chislo / 4)))
+    ryadov = math.ceil(chislo / kol)
+    av = 96 if ryadov <= 2 else 82 if ryadov <= 3 else 64 if ryadov <= 4 else 54
+    return kol, "grid mnogo", f";--av:{av}px;--fs:{14 if ryadov <= 3 else 12 if ryadov <= 4 else 11}px"
+
+
+def oblozhka(tema, mysl, lyudi, n, papka, kicker=None):
+    kol, cls, stil = setka(len(lyudi))
+    mnogo = cls.endswith("mnogo")  # в большом круге под именем компании места нет
     ryad = "".join(f'<div class="p">{foto(p, "big", papka)}<b>{H.escape(p["imya"])}</b>'
-                   f'<span>{H.escape(p.get("komp", ""))}</span></div>' for p in lyudi)
-    cls = "grid dva" if len(lyudi) > 5 else "grid"
+                   + ("" if mnogo else f'<span>{H.escape(p.get("komp", ""))}</span>') + '</div>' for p in lyudi)
     moder = f'Модератор — <b>{H.escape(n["moderator"])}</b> · ' if n["moderator"] else ""
     return f"""<section class="dark">
-<header><span class="logo">{n["logo_svg"]}{H.escape(n["brend"])}</span><span class="kick">{H.escape(n["kicker"])}</span></header>
+<header><span class="logo">{n["logo_svg"]}{H.escape(n["brend"])}</span><span class="kick">{H.escape(kicker or n["kicker"])}</span></header>
 <h1>{H.escape(tema)}</h1>
 <div class="mysl">{md(mysl)}</div>
-<div class="{cls}" style="grid-template-columns:repeat({kol},1fr)">{ryad}</div>
+<div class="{cls}" style="grid-template-columns:repeat({kol},1fr){stil}">{ryad}</div>
 <footer><span>{moder}{H.escape(n["podval"])}</span><span>Интро участников →</span></footer>
 </section>"""
 
@@ -115,6 +132,9 @@ h1{{font-weight:800;font-size:80px;line-height:1.02;letter-spacing:-.035em;margi
 .grid.dva{{margin-top:30px;row-gap:18px}}.grid.dva .big{{width:112px;height:112px}}.grid.dva span.big.ini{{font-size:40px}}
 .grid.dva b{{font-size:17px;margin-top:8px}}.grid.dva span{{font-size:12.5px}}
 .grid .p{{text-align:center}}
+.grid.mnogo{{margin-top:22px;row-gap:10px;gap:6px}}.grid.mnogo .big{{width:var(--av);height:var(--av);border-width:2px}}
+.grid.mnogo span.big.ini{{font-size:calc(var(--av)*.36)}}.grid.mnogo b{{font-size:var(--fs);margin-top:4px;line-height:1.15}}
+.grid.mnogo .bigt{{width:6px;height:6px;top:4px;left:calc(50% + var(--av)*.36)}}
 .big{{width:170px;height:170px;border-radius:50%;object-fit:cover;border:3px solid {c["akcent_svetlyy"]};display:block;margin:0 auto}}
 .ini{{display:flex;align-items:center;justify-content:center;background:#3a3a3e;color:{c["akcent_svetlyy"]};font-weight:800}}
 .grid span.ini,.kto span.ini{{display:flex;align-items:center;justify-content:center;padding:0;margin:0 auto;color:{c["akcent_svetlyy"]};line-height:1}}
@@ -144,15 +164,19 @@ footer b{{color:{c["akcent_svetlyy"]}}}
 """
 
 
+def golova(n, title):
+    shrifty = "family=" + "&family=".join(f.replace(" ", "+") + ":wght@400;500;600;700;800"
+                                            for f in dict.fromkeys([n["shrift_zag"], n["shrift_tekst"]]))
+    return (f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>{H.escape(title)}</title>'
+            f'<link href="https://fonts.googleapis.com/css2?{shrifty}&subset=cyrillic&display=swap" rel="stylesheet">'
+            f'<style>{css(n)}</style></head>')
+
+
 def html_kruga(krug, tekst, n, papka):
     """HTML деки. Состав и порядок — из krug_<n>.json: помощник мог заменить конкурента из запаса."""
     lyudi = tekst["lyudi"]
-    stranicy = [oblozhka(krug["tema"], tekst["mysl"], lyudi, n, papka)] + [slayd(p, n, papka) for p in lyudi]
-    shrifty = "family=" + "&family=".join(f.replace(" ", "+") + ":wght@400;500;600;700;800"
-                                            for f in dict.fromkeys([n["shrift_zag"], n["shrift_tekst"]]))
-    return (f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>{H.escape(n["kicker"])} — {H.escape(krug["tema"])}</title>'
-            f'<link href="https://fonts.googleapis.com/css2?{shrifty}&subset=cyrillic&display=swap" rel="stylesheet">'
-            f'<style>{css(n)}</style></head><body>{"".join(stranicy)}</body></html>')
+    stranicy = [oblozhka(krug["tema"], tekst["mysl"], lyudi, n, papka, krug.get("kicker"))] + [slayd(p, n, papka) for p in lyudi]
+    return golova(n, f'{krug.get("kicker") or n["kicker"]} — {krug["tema"]}') + f'<body>{"".join(stranicy)}</body></html>'
 
 
 def bezopasnoe_imya(t):
@@ -160,7 +184,12 @@ def bezopasnoe_imya(t):
 
 
 def imya_pdf(papka, krug, n):
-    return Path(papka) / "pdf" / f"{bezopasnoe_imya(n['kicker'])} — {bezopasnoe_imya(krug['tema'])}.pdf"
+    return Path(papka) / "pdf" / f"{bezopasnoe_imya(krug.get('kicker') or n['kicker'])} — {bezopasnoe_imya(krug['tema'])}.pdf"
+
+
+def html_kartochki(p, n, papka):
+    """Карточка человека — его слайд отдельной страницей. Код карточки — ключ k."""
+    return golova(n, p["imya"]) + f'<body>{slayd(p, n, papka)}</body></html>'
 
 
 def gotovye(papka, nomera=None, fayl="krugi.json"):
@@ -175,6 +204,28 @@ PROVERKA_NAEZDA = """[...document.querySelectorAll('section')].map((s,i)=>{
   const lb=last?last.getBoundingClientRect().bottom:0;
   const it=idea?idea.getBoundingClientRect().top:(foot?foot.getBoundingClientRect().top:r.bottom);
   return [i+1, Math.round(it-lb)]})"""
+
+
+async def kartochki(papka, krugi, n):
+    """Карточка на каждого человека партии: kartochki/<k>.pdf. Человек в двух кругах — одна карточка."""
+    from playwright.async_api import async_playwright
+    papka = Path(papka)
+    (papka / "kartochki" / "html").mkdir(parents=True, exist_ok=True)
+    lyudi = {}
+    for k in krugi:
+        for p in json.loads((papka / "dannye" / f"krug_{k['n']}.json").read_text(encoding="utf-8"))["lyudi"]:
+            lyudi.setdefault(p["k"], p)
+    async with async_playwright() as pw:
+        b = await pw.chromium.launch()
+        pg = await b.new_page(viewport={"width": 1600, "height": 900})
+        for k, p in lyudi.items():
+            src = papka / "kartochki" / "html" / f"{k}.html"
+            src.write_text(html_kartochki(p, n, papka), encoding="utf-8")
+            await pg.goto(src.resolve().as_uri(), wait_until="networkidle")
+            await pg.evaluate("document.fonts.ready")
+            await pg.pdf(path=str(papka / "kartochki" / f"{k}.pdf"), width="1600px", height="900px", print_background=True)
+        await b.close()
+    return len(lyudi)
 
 
 async def pechat(papka, krugi, n):
@@ -210,11 +261,15 @@ def main(argv=None):
     a = argparse.ArgumentParser(description="Деки кругов: PDF 1600×900 и снимки страниц")
     a.add_argument("--papka", required=True, help="рабочая папка партии кругов")
     a.add_argument("--fayl", default="krugi.json", help="файл состава в dannye/ (по умолчанию krugi.json)")
+    a.add_argument("--kartochki", action="store_true", help="карточка на каждого человека: kartochki/<k>.pdf")
     a.add_argument("nomera", nargs="*", type=int)
     a = a.parse_args(argv)
     krugi = gotovye(a.papka, set(a.nomera), a.fayl)
     if not krugi:
         raise SystemExit("Нечего собирать: нет krug_<n>.json для этих кругов.")
+    if a.kartochki:
+        print("Карточек:", asyncio.run(kartochki(a.papka, krugi, nastroyki())), "→", Path(a.papka) / "kartochki")
+        return
     plohie = asyncio.run(pechat(a.papka, krugi, nastroyki()))
     print("Собрано:", len(krugi), "· PDF в", Path(a.papka) / "pdf")
     if plohie:
