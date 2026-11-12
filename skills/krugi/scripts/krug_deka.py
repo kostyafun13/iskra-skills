@@ -49,8 +49,8 @@ def nastroyki(put=NASTROYKA):
 
 
 def md(t):
-    """**жирный** → <b>, остальное экранируется."""
-    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", H.escape(t or "", quote=False))
+    """**жирный** → <b>, перенос строки → <br> (гипотеза в блоке 05 — с новой строки), остальное экранируется."""
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", H.escape(t or "", quote=False)).replace("\n", "<br>")
 
 
 def initsialy(imya):

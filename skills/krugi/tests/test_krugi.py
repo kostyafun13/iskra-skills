@@ -65,6 +65,9 @@ class Deka(unittest.TestCase):
         self.assertNotIn("<script>x", h)
         self.assertIn("<b>жирно</b>", h)
 
+    def test_gipoteza_s_novoy_stroki(self):
+        self.assertEqual(deka.md("**Клиенты:** А.\n**Гипотеза:** Б."), "<b>Клиенты:</b> А.<br><b>Гипотеза:</b> Б.")
+
     def test_chelovek_na_oblozhke_odin_raz(self):
         h = self.html([chelovek("a", "Иван Петров")])
         oblozhka = h.split("</section>")[0]
